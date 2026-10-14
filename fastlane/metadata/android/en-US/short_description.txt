@@ -1,0 +1,1 @@
+Turn mobile data off on Wi-Fi and restore it after two minutes. Requires Shizuku.

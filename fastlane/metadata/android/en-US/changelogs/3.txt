@@ -1,0 +1,1 @@
+Initial public release. Shizuku remote processes for HyperOS compatibility, manual controls and local diagnostics. Data commands verified on Poco X7 Pro / Android 16. Full Wi-Fi automation still needs everyday-use validation.

@@ -1,0 +1,9 @@
+Disables mobile data when connected to Wi-Fi and enables it after two minutes without Wi-Fi. Reconnecting before the timer ends cancels restoration. A persistent notification shows status and provides a stop action.
+
+Requires Android 11 or newer and active, authorized Shizuku. No root required. Device firmware must allow the shell user to control mobile data. Interface currently in Brazilian Portuguese.
+
+Includes manual controls and local diagnostic logs. No ads, analytics, or external server.
+
+If Shizuku stops while data is off, enable data manually. Wi-Fi without internet also turns data off. Stopping attempts to enable data regardless of its initial state. Battery restrictions and device sleep may delay monitoring.
+
+Early release: data commands verified on Poco X7 Pro / Android 16. Complete Wi-Fi automation still needs everyday-use validation.
