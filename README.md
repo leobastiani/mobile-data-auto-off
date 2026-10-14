@@ -132,3 +132,5 @@ review under the [F-Droid inclusion policy](https://f-droid.org/docs/Inclusion_P
 Copyright (C) 2026 Leonardo Guarnieri de Bastiani.
 Licensed under **GPL-3.0-only**; see [LICENSE](LICENSE).
 Shizuku dependencies retain their [upstream licenses](https://github.com/RikkaApps/Shizuku-API).
+
+Gradle Wrapper files are licensed under Apache-2.0; see [LICENSES/Apache-2.0.txt](LICENSES/Apache-2.0.txt).
