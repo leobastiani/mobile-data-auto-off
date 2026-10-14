@@ -23,6 +23,7 @@ public final class MainActivity extends Activity {
     private static final int SHIZUKU_REQUEST = 9;
     private TextView state;
     private TextView logView;
+    private TextView backgroundState;
     private final android.os.Handler handler = new android.os.Handler(android.os.Looper.getMainLooper());
     private final java.util.concurrent.ExecutorService tests = java.util.concurrent.Executors.newSingleThreadExecutor();
     private boolean testBusy;
@@ -78,6 +79,23 @@ public final class MainActivity extends Activity {
         state.setTextSize(15);
         state.setPadding(0, pad, 0, pad);
         content.addView(state);
+
+        backgroundState = new TextView(this);
+        backgroundState.setTextSize(14);
+        content.addView(backgroundState);
+        makeButton("Permitir alarmes durante o repouso", content).setOnClickListener(v -> {
+            if (Build.VERSION.SDK_INT >= 31) openSettings(new Intent(
+                    android.provider.Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM,
+                    android.net.Uri.parse("package:" + getPackageName())));
+            else Toast.makeText(this, "Alarmes já disponíveis neste Android", Toast.LENGTH_SHORT).show();
+        });
+        makeButton("Configurar bateria em segundo plano", content).setOnClickListener(v ->
+                openSettings(new Intent(android.provider.Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)));
+        TextView backgroundHelp = new TextView(this);
+        backgroundHelp.setText("Para funcionar com a tela apagada, permita alarmes e libere as restrições "
+                + "de bateria deste app e do Shizuku. No HyperOS, habilite também a inicialização automática "
+                + "dos dois nas configurações do aparelho. Sem alarmes exatos, a religação pode atrasar.");
+        content.addView(backgroundHelp);
 
         Button permission = makeButton("1. Autorizar Shizuku", content);
         permission.setOnClickListener(v -> requestShizuku());
@@ -138,14 +156,15 @@ public final class MainActivity extends Activity {
         refresh();
     }
 
+    private void openSettings(Intent intent) {
+        try { startActivity(intent); }
+        catch (android.content.ActivityNotFoundException error) {
+            Toast.makeText(this, "Abra as configurações do app no Android", Toast.LENGTH_LONG).show();
+        }
+    }
+
     private String mobileState() {
-        try {
-            android.telephony.TelephonyManager tm = getSystemService(android.telephony.TelephonyManager.class);
-            int sub = android.telephony.SubscriptionManager.getDefaultDataSubscriptionId();
-            if (!android.telephony.SubscriptionManager.isValidSubscriptionId(sub)) return "sem SIM padrão de dados";
-            return tm.createForSubscriptionId(sub).isDataEnabled() ? "ligados" : "desligados";
-        } catch (SecurityException e) { return "indisponível: permissão de telefone necessária"; }
-        catch (Exception e) { return "indisponível: " + e; }
+        return MobileDataCommand.observedState(this);
     }
 
     private void manualTest(String action) {
@@ -254,13 +273,19 @@ public final class MainActivity extends Activity {
     private void refresh() {
         if (state == null) return;
         boolean enabled = getSharedPreferences("automation", MODE_PRIVATE).getBoolean("enabled", false);
+        if (backgroundState != null) {
+            boolean unrestricted = getSystemService(android.os.PowerManager.class)
+                    .isIgnoringBatteryOptimizations(getPackageName());
+            backgroundState.setText("Alarmes exatos: " + (RestoreAlarm.canScheduleExact(this) ? "permitidos" : "não permitidos")
+                    + "\nOtimização de bateria: " + (unrestricted ? "isento" : "ativa"));
+        }
         String shizukuState = !Shizuku.pingBinder() ? "Shizuku desligado"
                 : Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED
                 ? "Shizuku autorizado" : "Shizuku sem autorização";
         if (logView != null) logView.setText(DiagnosticLog.report(this));
         String last = getSharedPreferences("automation", MODE_PRIVATE)
                 .getString("last_status", "Nenhum evento registrado ainda");
-        state.setText("Automação: " + (enabled ? "ATIVA" : "DESATIVADA") + "\n"
+        state.setText("Automação configurada: " + (enabled ? "ATIVA" : "DESATIVADA") + "\n"
                 + shizukuState + "\nDados móveis: " + mobileState() + "\n" + last);
     }
 
@@ -275,6 +300,14 @@ public final class MainActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        if (RestoreAlarm.prefs(this).getBoolean("enabled", false)) {
+            try {
+                startForegroundService(new Intent(this, WifiMonitorService.class)
+                        .setAction(WifiMonitorService.ACTION_START));
+            } catch (RuntimeException error) {
+                DiagnosticLog.add(this, "Falha ao reconciliar monitor ao abrir: " + error);
+            }
+        }
         refresh();
     }
 

@@ -14,7 +14,8 @@ logs are in Brazilian Portuguese.
 2. Open the APK on your phone and allow installation from that source when prompted.
 3. Install and start Shizuku using its [official setup guide](https://shizuku.rikka.app/guide/setup/).
 4. Open **Wi-Fi Automático**, tap **Autorizar Shizuku**, and grant access.
-5. Tap **Ativar automação**. Allow notifications to see the silent monitoring notification and stop action.
+5. Use **Permitir alarmes durante o repouso** to allow exact alarms. Use **Configurar bateria em segundo plano** to exempt the app from battery optimization, and allow unrestricted battery use and autostart for both this app and Shizuku in manufacturer settings.
+6. Tap **Ativar automação**. Allow notifications to see the silent monitoring notification and stop action.
 
 Requires Android 11 or newer, active and authorized Shizuku, and firmware that
 allows the shell user to run `cmd phone data enable` and `cmd phone data disable`.
@@ -25,8 +26,8 @@ automation after boot, but Android or manufacturer restrictions may block startu
 **Early release:** mobile data commands were verified on a Poco X7 Pro
 (Xiaomi 2412DPC0AG), Android 16, on October 13, 2026. A device probe disabled and
 enabled data twice, verified `isDataEnabled()` after every command, and restored
-the initial enabled state. The complete Wi-Fi transition and 120-second timer
-still need everyday-use validation. Other devices have not been verified.
+the initial enabled state. The wake-up alarm, complete Wi-Fi transition, and 120-second timer
+still need screen-off and Doze validation on the physical device. Other devices have not been verified.
 
 ## Behavior and limitations
 
@@ -37,8 +38,15 @@ still need everyday-use validation. Other devices have not been verified.
 - Stopping automation attempts to enable data regardless of its initial state.
 - Manual mobile data changes are not preserved while automation is running.
 - If Shizuku stops while data is off, you may need to enable data manually in quick settings.
-- Manufacturer battery restrictions can interrupt monitoring. The two-minute timer
-  may run late while the phone sleeps.
+- Restoration uses a wake-up alarm that runs during idle, with a persisted deadline
+  preserved across process restarts within the same boot. Reconnection or stopping cancels it.
+  A reboot starts a new wait after Wi-Fi is checked. Exact alarm access is checked before
+  scheduling; without it, an inexact idle alarm is used and restoration can run late.
+- Manufacturer restrictions, forced stops, and Android idle alarm quotas can still delay
+  or interrupt automation. Opening the app reconciles previously enabled monitoring.
+  If Shizuku is unavailable at the deadline, restoration remains pending until it returns.
+- Short wake locks (30-second maximum) keep alarm delivery and data commands awake;
+  no wake lock is held during the two-minute wait.
 - Commands execute serially, with a 15-second timeout and captured output.
 - Uses the Shizuku remote-process interface pinned through API 13.1.5 to avoid
   a UserService startup failure on HyperOS/MediaTek ([upstream issue](https://github.com/RikkaApps/Shizuku/issues/1198)).
@@ -59,6 +67,8 @@ identifiers. Review logs before sharing: system errors can contain additional in
 | Notifications | Display monitoring status and a stop action. |
 | Foreground service / special use | Keep the Wi-Fi monitor running. |
 | Boot completed | Attempt to resume enabled automation after reboot. |
+| Exact alarms (special access) | Schedule the two-minute restoration during idle. |
+| Wake lock | Keep alarm delivery and commands awake briefly. |
 | Shizuku authorization | Run data-control commands as the shell user. |
 
 ## Build from source

@@ -13,6 +13,8 @@ public final class BootReceiver extends BroadcastReceiver {
         if (!Intent.ACTION_BOOT_COMPLETED.equals(intent.getAction())) return;
         boolean enabled = context.getSharedPreferences("automation", Context.MODE_PRIVATE)
                 .getBoolean("enabled", false);
+        RestoreAlarm.cancel(context);
+        DiagnosticLog.add(context, "Boot recebido; automação configurada=" + enabled);
         if (enabled) {
             Intent service = new Intent(context, WifiMonitorService.class)
                     .setAction(WifiMonitorService.ACTION_START);

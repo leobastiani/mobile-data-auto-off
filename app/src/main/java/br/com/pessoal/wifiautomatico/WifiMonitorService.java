@@ -19,6 +19,7 @@ import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
 import android.os.SystemClock;
+import android.os.PowerManager;
 
 import java.util.HashSet;
 import java.util.Set;
@@ -33,18 +34,16 @@ public final class WifiMonitorService extends Service {
     public static final String ACTION_STOP = "br.com.pessoal.wifiautomatico.STOP";
     private static final String CHANNEL_ID = "wifi-automatico";
     private static final int NOTIFICATION_ID = 101;
-    private static final long DELAY_MS = 120_000L;
 
     private final Handler main = new Handler(Looper.getMainLooper());
     private final ExecutorService shellQueue = Executors.newSingleThreadExecutor();
     private final Set<Network> wifiNetworks = new HashSet<>();
     private ConnectivityManager connectivity;
     private ConnectivityManager.NetworkCallback wifiCallback;
-    private boolean isWifiConnected;
-    private boolean monitoring;
-    private boolean waitingForMobile;
-    private int operationId;
-    private Runnable restoreMobile;
+    private volatile boolean isWifiConnected;
+    private volatile boolean monitoring;
+    private volatile int operationId;
+    private boolean restoreInFlight;
 
     private final Shizuku.OnBinderReceivedListener receivedListener = () ->
             main.post(this::connectShizuku);
@@ -57,6 +56,7 @@ public final class WifiMonitorService extends Service {
     @Override
     public void onCreate() {
         super.onCreate();
+        DiagnosticLog.add(this, "Serviço criado");
         NotificationManager nm = getSystemService(NotificationManager.class);
         nm.createNotificationChannel(new NotificationChannel(
                 CHANNEL_ID, "Automação de rede", NotificationManager.IMPORTANCE_LOW));
@@ -68,33 +68,42 @@ public final class WifiMonitorService extends Service {
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
-        if (intent != null && ACTION_STOP.equals(intent.getAction())) {
-            stopAutomation();
-            return START_NOT_STICKY;
+        try {
+            String action = intent == null ? null : intent.getAction();
+            DiagnosticLog.add(this, "Serviço iniciado; ação=" + action + "; reinício=" + (intent == null));
+            if (ACTION_STOP.equals(action)) {
+                stopAutomation();
+                return START_NOT_STICKY;
+            }
+            if (!RestoreAlarm.prefs(this).getBoolean("enabled", false)) {
+                stopSelf();
+                return START_NOT_STICKY;
+            }
+            if (RestoreAlarm.ACTION.equals(action) && !RestoreAlarm.isCurrent(this,
+                    intent.getLongExtra(RestoreAlarm.TOKEN, -1))) {
+                DiagnosticLog.add(this, "Entrega antiga ignorada pelo serviço");
+                if (!monitoring) stopSelf();
+                return monitoring ? START_STICKY : START_NOT_STICKY;
+            }
+            if (!monitoring) startAutomation();
+            else reconcileWifi();
+            return START_STICKY;
+        } finally {
+            RestoreReceiver.releaseDeliveryLock();
         }
-        if (!monitoring) startAutomation();
-        return START_STICKY;
     }
 
     private void startAutomation() {
         monitoring = true;
         getSharedPreferences("automation", MODE_PRIVATE).edit().putBoolean("enabled", true).apply();
 
-        // Faz a leitura inicial antes de registrar os eventos.
-        for (Network network : connectivity.getAllNetworks()) {
-            NetworkCapabilities capabilities = connectivity.getNetworkCapabilities(network);
-            if (capabilities != null && capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) {
-                wifiNetworks.add(network);
-            }
-        }
-        isWifiConnected = !wifiNetworks.isEmpty();
-
         wifiCallback = new ConnectivityManager.NetworkCallback() {
             @Override
             public void onAvailable(Network network) {
                 main.post(() -> {
                     if (!monitoring) return;
-                    wifiNetworks.add(network);
+                    DiagnosticLog.add(WifiMonitorService.this, "Evento Wi-Fi disponível");
+                    readWifiNetworks();
                     updateWifiState();
                 });
             }
@@ -103,7 +112,8 @@ public final class WifiMonitorService extends Service {
             public void onLost(Network network) {
                 main.post(() -> {
                     if (!monitoring) return;
-                    wifiNetworks.remove(network);
+                    DiagnosticLog.add(WifiMonitorService.this, "Evento Wi-Fi perdido");
+                    readWifiNetworks();
                     updateWifiState();
                 });
             }
@@ -111,7 +121,10 @@ public final class WifiMonitorService extends Service {
         NetworkRequest request = new NetworkRequest.Builder()
                 .addTransportType(NetworkCapabilities.TRANSPORT_WIFI).build();
         connectivity.registerNetworkCallback(request, wifiCallback);
+        readWifiNetworks();
+        isWifiConnected = !wifiNetworks.isEmpty();
         if (isWifiConnected) {
+            cancelTimer();
             status("Wi-Fi conectado: desligando dados móveis");
             setMobileData(false, "Wi-Fi conectado");
         } else {
@@ -131,30 +144,43 @@ public final class WifiMonitorService extends Service {
         }
     }
 
+    private boolean hasWifi() {
+        for (Network network : connectivity.getAllNetworks()) {
+            NetworkCapabilities capabilities = connectivity.getNetworkCapabilities(network);
+            if (capabilities != null && capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) return true;
+        }
+        return false;
+    }
+
+    private void readWifiNetworks() {
+        wifiNetworks.clear();
+        for (Network network : connectivity.getAllNetworks()) {
+            NetworkCapabilities capabilities = connectivity.getNetworkCapabilities(network);
+            if (capabilities != null && capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI))
+                wifiNetworks.add(network);
+        }
+    }
+
+    private void reconcileWifi() {
+        readWifiNetworks();
+        boolean changed = isWifiConnected != !wifiNetworks.isEmpty();
+        updateWifiState();
+        if (!changed && !isWifiConnected) beginTwoMinuteTimer();
+    }
+
     private void beginTwoMinuteTimer() {
-        cancelTimer();
-        waitingForMobile = true;
-        long disconnectTime = SystemClock.elapsedRealtime();
-        status("Wi-Fi desconectado: aguardando 2 minutos");
-        restoreMobile = () -> {
-            if (!monitoring || isWifiConnected || !waitingForMobile) return;
-            long elapsed = SystemClock.elapsedRealtime() - disconnectTime;
-            if (elapsed < DELAY_MS) {
-                main.postDelayed(restoreMobile, DELAY_MS - elapsed);
-                return;
-            }
-            waitingForMobile = false;
-            setMobileData(true, "Wi-Fi ausente por 2 minutos");
-        };
-        main.postDelayed(restoreMobile, DELAY_MS);
+        if (RestorePolicy.isDue(monitoring, isWifiConnected, RestoreAlarm.deadline(this),
+                SystemClock.elapsedRealtime())) {
+            if (!restoreInFlight) setMobileData(true, "Wi-Fi ausente por 2 minutos");
+        } else {
+            status("Wi-Fi desconectado: aguardando 2 minutos");
+            RestoreAlarm.schedule(this);
+        }
     }
 
     private void cancelTimer() {
-        waitingForMobile = false;
-        if (restoreMobile != null) {
-            main.removeCallbacks(restoreMobile);
-            restoreMobile = null;
-        }
+        ++operationId;
+        RestoreAlarm.cancel(this);
     }
 
     private void connectShizuku() {
@@ -167,27 +193,52 @@ public final class WifiMonitorService extends Service {
             status("Autorize o aplicativo no Shizuku");
             return;
         }
+        reconcileWifi();
         if (isWifiConnected) setMobileData(false, "Shizuku disponível e Wi-Fi conectado");
-        else if (!waitingForMobile) setMobileData(true, "Shizuku disponível e Wi-Fi ausente");
     }
 
     private void setMobileData(boolean enabled, String reason) {
+        if (enabled && restoreInFlight) return;
+        if (enabled) restoreInFlight = true;
         int thisOperation = ++operationId;
+        long token = RestoreAlarm.prefs(this).getLong(RestoreAlarm.TOKEN, 0);
+        PowerManager.WakeLock lock = getSystemService(PowerManager.class)
+                .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "wifi-automatico:data-command");
+        lock.acquire(30_000L);
         status(reason + (enabled ? ": religando dados móveis" : ": desligando dados móveis"));
         shellQueue.execute(() -> {
             String result;
             try {
-                result = MobileDataCommand.setEnabled(enabled);
+                if (!monitoring || thisOperation != operationId
+                        || enabled == hasWifi()
+                        || (enabled && !RestoreAlarm.isCurrent(this, token))) {
+                    result = "IGNORADO: operação substituída ou rede alterada";
+                } else {
+                    result = MobileDataCommand.setEnabled(enabled);
+                }
             } catch (Exception error) {
-                result = "ERRO: " + error.getMessage();
+                result = "ERRO: " + error;
             }
             DiagnosticLog.add(this, "Comando automático: " + result);
+            DiagnosticLog.add(this, "Dados observados após comando: " + MobileDataCommand.observedState(this));
             final String finalResult = result;
             main.post(() -> {
-                if (monitoring && thisOperation == operationId) {
-                    status(finalResult.startsWith("OK:")
-                            ? "Dados móveis " + (enabled ? "ligados" : "desligados")
-                            : "Falha ao alterar dados móveis: " + finalResult);
+                try {
+                    if (enabled) restoreInFlight = false;
+                    if (monitoring && finalResult.startsWith("IGNORADO:")) {
+                        reconcileWifi();
+                        return;
+                    }
+                    if (enabled && monitoring && thisOperation != operationId && !isWifiConnected)
+                        beginTwoMinuteTimer();
+                    if (monitoring && thisOperation == operationId) {
+                        if (enabled && finalResult.startsWith("OK:")) RestoreAlarm.cancel(this);
+                        status(finalResult.startsWith("OK:")
+                                ? "Dados móveis " + (enabled ? "ligados" : "desligados")
+                                : "Falha ao alterar dados móveis: " + finalResult);
+                    }
+                } finally {
+                    if (lock.isHeld()) lock.release();
                 }
             });
         });
@@ -199,6 +250,9 @@ public final class WifiMonitorService extends Service {
         getSharedPreferences("automation", MODE_PRIVATE).edit().putBoolean("enabled", false).apply();
         cancelTimer();
         status("Parando e tentando religar os dados móveis");
+        PowerManager.WakeLock stopLock = getSystemService(PowerManager.class)
+                .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "wifi-automatico:stop-restore");
+        stopLock.acquire(30_000L);
         shellQueue.execute(() -> {
             String result;
             try {
@@ -208,8 +262,12 @@ public final class WifiMonitorService extends Service {
             }
             String finalResult = result;
             main.post(() -> {
-                status("Automação parada. Tentativa de religar dados: " + finalResult);
-                stopSelf();
+                try {
+                    status("Automação parada. Tentativa de religar dados: " + finalResult);
+                    stopSelf();
+                } finally {
+                    if (stopLock.isHeld()) stopLock.release();
+                }
             });
         });
     }
@@ -245,8 +303,9 @@ public final class WifiMonitorService extends Service {
     @Override
     public void onDestroy() {
         getSharedPreferences("automation", MODE_PRIVATE).edit().remove("stopping_until").apply();
+        DiagnosticLog.add(this, "Serviço destruído; prazo de religação preservado");
         monitoring = false;
-        cancelTimer();
+        ++operationId;
         if (wifiCallback != null) {
             try { connectivity.unregisterNetworkCallback(wifiCallback); }
             catch (Exception ignored) { }

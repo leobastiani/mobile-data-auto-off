@@ -14,6 +14,20 @@ import rikka.shizuku.Shizuku;
 
 /** Contorna a falha do UserService no HyperOS usando o processo remoto do servidor. */
 final class MobileDataCommand {
+    static String observedState(android.content.Context context) {
+        try {
+            int sub = android.telephony.SubscriptionManager.getDefaultDataSubscriptionId();
+            if (!android.telephony.SubscriptionManager.isValidSubscriptionId(sub))
+                return "sem SIM padrão de dados";
+            android.telephony.TelephonyManager manager = context.getSystemService(android.telephony.TelephonyManager.class);
+            return manager.createForSubscriptionId(sub).isDataEnabled() ? "ligados" : "desligados";
+        } catch (SecurityException error) {
+            return "indisponível: permissão de telefone necessária";
+        } catch (Exception error) {
+            return "indisponível: " + error;
+        }
+    }
+
     static synchronized String setEnabled(boolean enabled) {
         String command = "cmd phone data " + (enabled ? "enable" : "disable");
         IRemoteProcess process = null;
