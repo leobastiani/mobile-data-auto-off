@@ -14,7 +14,7 @@ logs are in Brazilian Portuguese.
 2. Open the APK on your phone and allow installation from that source when prompted.
 3. Install and start Shizuku using its [official setup guide](https://shizuku.rikka.app/guide/setup/).
 4. Open **Wi-Fi Automático**, tap **Autorizar Shizuku**, and grant access.
-5. Tap **Ativar automação**. Allow notifications to see the persistent status and stop action.
+5. Tap **Ativar automação**. Allow notifications to see the silent monitoring notification and stop action.
 
 Requires Android 11 or newer, active and authorized Shizuku, and firmware that
 allows the shell user to run `cmd phone data enable` and `cmd phone data disable`.
@@ -30,6 +30,9 @@ still need everyday-use validation. Other devices have not been verified.
 
 ## Behavior and limitations
 
+- While automation runs, a single silent foreground-service notification remains
+  available with a stop action. Wi-Fi transitions and mobile data commands do not
+  send or update notifications; detailed status and errors stay in the app and log.
 - Wi-Fi connectivity is monitored, even if that Wi-Fi has no internet access.
 - Stopping automation attempts to enable data regardless of its initial state.
 - Manual mobile data changes are not preserved while automation is running.

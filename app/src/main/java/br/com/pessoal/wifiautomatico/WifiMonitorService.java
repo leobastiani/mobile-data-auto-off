@@ -60,7 +60,7 @@ public final class WifiMonitorService extends Service {
         NotificationManager nm = getSystemService(NotificationManager.class);
         nm.createNotificationChannel(new NotificationChannel(
                 CHANNEL_ID, "Automação de rede", NotificationManager.IMPORTANCE_LOW));
-        startForeground(NOTIFICATION_ID, notification("Iniciando monitor de Wi-Fi"));
+        startForeground(NOTIFICATION_ID, notification());
         connectivity = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
         Shizuku.addBinderReceivedListenerSticky(receivedListener);
         Shizuku.addBinderDeadListener(deadListener);
@@ -218,11 +218,10 @@ public final class WifiMonitorService extends Service {
         DiagnosticLog.add(this, message);
         getSharedPreferences("automation", MODE_PRIVATE).edit()
                 .putString("last_status", message).apply();
-        getSystemService(NotificationManager.class).notify(
-                NOTIFICATION_ID, notification(message));
+        // Mudanças de estado ficam na interface e no log, sem reenviar notificações.
     }
 
-    private Notification notification(String detail) {
+    private Notification notification() {
         Intent open = new Intent(this, MainActivity.class);
         PendingIntent content = PendingIntent.getActivity(this, 0, open,
                 PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
@@ -231,10 +230,14 @@ public final class WifiMonitorService extends Service {
                 PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
         return new Notification.Builder(this, CHANNEL_ID)
                 .setContentTitle("Wi-Fi Automático")
-                .setContentText(detail)
+                .setContentText("Automação ativa • Monitorando o Wi-Fi")
                 .setSmallIcon(android.R.drawable.stat_notify_sync)
                 .setContentIntent(content)
                 .setOngoing(true)
+                .setGroup("wifi-automatico-monitor")
+                .setGroupAlertBehavior(Notification.GROUP_ALERT_SUMMARY)
+                .setOnlyAlertOnce(true)
+                .setShowWhen(false)
                 .addAction(android.R.drawable.ic_media_pause, "Parar", stopPending)
                 .build();
     }
