@@ -24,6 +24,8 @@ public final class BootReceiver extends BroadcastReceiver {
                 DiagnosticLog.add(context, "Falha ao iniciar após boot: " + error);
                 // Algumas versões do HyperOS bloqueiam o início automático.
                 // Neste caso, abrir o app e tocar em Ativar automação.
+                ActionRequiredNotice.show(context,
+                        "O monitor não iniciou após reiniciar. Abra o app e toque em Ativar automação.", false);
             }
         }
     }

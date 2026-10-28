@@ -34,6 +34,10 @@ still need screen-off and Doze validation on the physical device. Other devices 
 - While automation runs, a single silent foreground-service notification remains
   available with a stop action. Wi-Fi transitions and mobile data commands do not
   send or update notifications; detailed status and errors stay in the app and log.
+- The only exception is a separate high-priority "action required" notification, shown when
+  you must act manually: Shizuku is stopped (for example after a reboot), the app is not
+  authorized in Shizuku, data could not be restored because Shizuku is unavailable, or the
+  monitor was blocked from starting at boot. It disappears once the problem is resolved.
 - Wi-Fi connectivity is monitored, even if that Wi-Fi has no internet access.
 - Stopping automation attempts to enable data regardless of its initial state.
 - Manual mobile data changes are not preserved while automation is running.
@@ -64,7 +68,7 @@ identifiers. Review logs before sharing: system errors can contain additional in
 | --- | --- |
 | Network state | Observe Wi-Fi connections. |
 | Phone state | Read mobile data status for display, toggle, and diagnostics. |
-| Notifications | Display monitoring status and a stop action. |
+| Notifications | Display monitoring status, a stop action, and alerts when manual action is required. |
 | Foreground service / special use | Keep the Wi-Fi monitor running. |
 | Boot completed | Attempt to resume enabled automation after reboot. |
 | Exact alarms (special access) | Schedule the two-minute restoration during idle. |

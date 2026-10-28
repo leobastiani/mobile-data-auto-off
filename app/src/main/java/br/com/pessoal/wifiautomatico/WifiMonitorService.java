@@ -34,6 +34,8 @@ public final class WifiMonitorService extends Service {
     public static final String ACTION_STOP = "br.com.pessoal.wifiautomatico.STOP";
     private static final String CHANNEL_ID = "wifi-automatico";
     private static final int NOTIFICATION_ID = 101;
+    private static final String SHIZUKU_STOPPED_NOTICE =
+            "O Shizuku não está rodando. Abra o Shizuku e toque em Iniciar para a automação funcionar.";
 
     private final Handler main = new Handler(Looper.getMainLooper());
     private final ExecutorService shellQueue = Executors.newSingleThreadExecutor();
@@ -50,8 +52,13 @@ public final class WifiMonitorService extends Service {
 
     private final Shizuku.OnBinderDeadListener deadListener = () ->
             main.post(() -> {
-                if (monitoring) status("Shizuku parou: controle automático indisponível");
+                if (!monitoring) return;
+                status("Shizuku parou: controle automático indisponível");
+                ActionRequiredNotice.show(this, SHIZUKU_STOPPED_NOTICE, true);
             });
+
+    private final Shizuku.OnRequestPermissionResultListener permissionListener =
+            (requestCode, grantResult) -> main.post(this::connectShizuku);
 
     @Override
     public void onCreate() {
@@ -64,6 +71,7 @@ public final class WifiMonitorService extends Service {
         connectivity = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
         Shizuku.addBinderReceivedListenerSticky(receivedListener);
         Shizuku.addBinderDeadListener(deadListener);
+        Shizuku.addRequestPermissionResultListener(permissionListener);
     }
 
     @Override
@@ -96,6 +104,8 @@ public final class WifiMonitorService extends Service {
     private void startAutomation() {
         monitoring = true;
         getSharedPreferences("automation", MODE_PRIVATE).edit().putBoolean("enabled", true).apply();
+        // After a reboot Shizuku is usually stopped, and its binder listener never fires.
+        shizukuReady();
 
         wifiCallback = new ConnectivityManager.NetworkCallback() {
             @Override
@@ -183,16 +193,30 @@ public final class WifiMonitorService extends Service {
         RestoreAlarm.cancel(this);
     }
 
-    private void connectShizuku() {
-        if (!monitoring) return;
+    private boolean isShizukuUsable() {
+        return Shizuku.pingBinder()
+                && Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED;
+    }
+
+    /** Tells the user what to do when Shizuku can't run commands, and dismisses the notice otherwise. */
+    private boolean shizukuReady() {
         if (!Shizuku.pingBinder()) {
             status("Shizuku indisponível: inicie-o manualmente");
-            return;
+            ActionRequiredNotice.show(this, SHIZUKU_STOPPED_NOTICE, true);
+            return false;
         }
         if (Shizuku.checkSelfPermission() != PackageManager.PERMISSION_GRANTED) {
             status("Autorize o aplicativo no Shizuku");
-            return;
+            ActionRequiredNotice.show(this,
+                    "Autorize o Wi-Fi Automático no Shizuku: abra o app e toque em Autorizar Shizuku.", false);
+            return false;
         }
+        ActionRequiredNotice.clear(this);
+        return true;
+    }
+
+    private void connectShizuku() {
+        if (!monitoring || !shizukuReady()) return;
         reconcileWifi();
         if (isWifiConnected) setMobileData(false, "Shizuku disponível e Wi-Fi conectado");
     }
@@ -232,8 +256,13 @@ public final class WifiMonitorService extends Service {
                     if (enabled && monitoring && thisOperation != operationId && !isWifiConnected)
                         beginTwoMinuteTimer();
                     if (monitoring && thisOperation == operationId) {
-                        if (enabled && finalResult.startsWith("OK:")) RestoreAlarm.cancel(this);
-                        status(finalResult.startsWith("OK:")
+                        boolean ok = finalResult.startsWith("OK:");
+                        if (enabled && ok) RestoreAlarm.cancel(this);
+                        if (ok) ActionRequiredNotice.clear(this);
+                        else if (enabled && !isShizukuUsable())
+                            ActionRequiredNotice.show(this, "Sem Wi-Fi e com dados móveis desligados. "
+                                    + "Inicie o Shizuku ou ligue os dados manualmente.", true);
+                        status(ok
                                 ? "Dados móveis " + (enabled ? "ligados" : "desligados")
                                 : "Falha ao alterar dados móveis: " + finalResult);
                     }
@@ -249,6 +278,7 @@ public final class WifiMonitorService extends Service {
         monitoring = false;
         getSharedPreferences("automation", MODE_PRIVATE).edit().putBoolean("enabled", false).apply();
         cancelTimer();
+        ActionRequiredNotice.clear(this);
         status("Parando e tentando religar os dados móveis");
         PowerManager.WakeLock stopLock = getSystemService(PowerManager.class)
                 .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "wifi-automatico:stop-restore");
@@ -312,6 +342,7 @@ public final class WifiMonitorService extends Service {
         }
         Shizuku.removeBinderReceivedListener(receivedListener);
         Shizuku.removeBinderDeadListener(deadListener);
+        Shizuku.removeRequestPermissionResultListener(permissionListener);
         shellQueue.shutdown();
         super.onDestroy();
     }

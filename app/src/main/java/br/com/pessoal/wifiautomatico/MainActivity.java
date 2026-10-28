@@ -142,7 +142,8 @@ public final class MainActivity extends Activity {
         alert.setPadding(0, pad, 0, 0);
         alert.setText("ATENÇÃO: se o Shizuku parar enquanto os dados móveis estiverem desligados, "
                 + "o app poderá ficar impossibilitado de religá-los. Nesse caso, ligue-os "
-                + "manualmente pelo painel de controle. Após reiniciar o celular, inicie o Shizuku novamente.");
+                + "manualmente pelo painel de controle. Após reiniciar o celular, inicie o Shizuku novamente: "
+                + "o app avisa por notificação sempre que precisar de uma ação sua.");
         content.addView(alert);
 
         ScrollView scroll = new ScrollView(this);
